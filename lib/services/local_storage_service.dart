@@ -1,19 +1,18 @@
-import 'dart:io';
 import 'dart:typed_data';
-import 'package:path_provider/path_provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 import 'package:image/image.dart' as img;
 import '../models/item.dart';
 
 class LocalStorageService {
   static final LocalStorageService _instance = LocalStorageService._internal();
-  final _uuid = const Uuid();
-  static const String _imagePrefix = 'data:image/png;base64,';
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
+  final Uuid _uuid = const Uuid();
+
   static const int _maxImageSize = 800; // Maximum width/height for images
-  static const int _compressionThreshold = 5 * 1024 * 1024; // 5MB
 
   factory LocalStorageService() {
     return _instance;
@@ -21,44 +20,75 @@ class LocalStorageService {
 
   LocalStorageService._internal();
 
-  Future<String> uploadImage(Uint8List imageBytes) async {
+  /// Get current user's UID
+  String? _getCurrentUserId() {
+    return FirebaseAuth.instance.currentUser?.uid;
+  }
+
+  /// Upload an item with an image and metadata to Firebase Storage and Firestore
+  Future<void> uploadItem(Uint8List imageBytes, String itemName,
+      String storageLocation, DateTime expiryDate) async {
     try {
+      final userId = _getCurrentUserId();
+      if (userId == null) {
+        throw Exception("User not authenticated");
+      }
+
       final String fileName = '${_uuid.v4()}.png';
 
       // Decode and compress the image
       final image = img.decodeImage(imageBytes);
-      if (image == null) throw Exception('Failed to decode image');
-
-      // Resize if needed
-      final compressedImage = _resizeImage(image);
-      final pngBytes =
-          img.encodePng(compressedImage, level: 6); // Higher compression
-
-      if (kIsWeb) {
-        // For web, store compressed image as base64
-        final base64Image = _imagePrefix + base64Encode(pngBytes);
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString(fileName, base64Image);
-        return fileName;
-      } else {
-        // For native platforms, store compressed image in app documents directory
-        final appDir = await getApplicationDocumentsDirectory();
-        final imagesDir = Directory('${appDir.path}/item_images');
-
-        if (!await imagesDir.exists()) {
-          await imagesDir.create(recursive: true);
-        }
-
-        final String filePath = '${imagesDir.path}/$fileName';
-        final file = File(filePath);
-        await file.writeAsBytes(pngBytes);
-        return filePath;
+      if (image == null) {
+        throw Exception('Failed to decode image');
       }
+      final compressedImage = _resizeImage(image);
+      final pngBytes = img.encodePng(compressedImage);
+
+      // Upload the compressed image to Firebase Storage
+      final imageRef = _storage.ref().child('users/$userId/images/$fileName');
+      await imageRef.putData(Uint8List.fromList(pngBytes));
+
+      // Get the image's download URL
+      final imageUrl = await imageRef.getDownloadURL();
+
+      // Add metadata to Firestore
+      final item = {
+        'itemName': itemName,
+        'storageLocation': storageLocation,
+        'expiryDate': expiryDate,
+        'dateAdded': DateTime.now(),
+        'imageUrl': imageUrl,
+        'userId': userId,
+      };
+
+      await _firestore.collection('items').add(item);
     } catch (e) {
-      throw Exception('Failed to save image: $e');
+      throw Exception('Failed to upload item: $e');
     }
   }
 
+  /// Retrieve items for the current user from Firestore
+  Future<List<Map<String, dynamic>>> getItems() async {
+    try {
+      final userId = _getCurrentUserId();
+      if (userId == null) {
+        throw Exception("User not authenticated");
+      }
+
+      final querySnapshot = await _firestore
+          .collection('items')
+          .where('userId', isEqualTo: userId)
+          .get();
+
+      return querySnapshot.docs
+          .map((doc) => {...doc.data(), 'id': doc.id})
+          .toList();
+    } catch (e) {
+      throw Exception('Failed to fetch items: $e');
+    }
+  }
+
+  /// Resize image to fit within the maximum allowed dimensions
   img.Image _resizeImage(img.Image image) {
     final width = image.width;
     final height = image.height;
@@ -70,106 +100,60 @@ class LocalStorageService {
     if (width > height) {
       final newWidth = _maxImageSize;
       final newHeight = (height * _maxImageSize / width).round();
-      return img.copyResize(
-        image,
-        width: newWidth,
-        height: newHeight,
-        interpolation: img.Interpolation.linear,
-      );
+      return img.copyResize(image,
+          width: newWidth,
+          height: newHeight,
+          interpolation: img.Interpolation.linear);
     } else {
       final newHeight = _maxImageSize;
       final newWidth = (width * _maxImageSize / height).round();
-      return img.copyResize(
-        image,
-        width: newWidth,
-        height: newHeight,
-        interpolation: img.Interpolation.linear,
-      );
+      return img.copyResize(image,
+          width: newWidth,
+          height: newHeight,
+          interpolation: img.Interpolation.linear);
     }
   }
 
-  Future<void> deleteImage(String imagePathOrKey) async {
+  /// Delete an item and its associated image from Firebase Storage and Firestore
+  Future<void> deleteItem(String itemId, String imageUrl) async {
     try {
-      if (kIsWeb) {
-        // For web, remove from SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove(imagePathOrKey);
-      } else {
-        // For native platforms, delete the file
-        final file = File(imagePathOrKey);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      }
+      // Delete the image from Firebase Storage
+      final ref = _storage.refFromURL(imageUrl);
+      await ref.delete();
+
+      // Delete the metadata from Firestore
+      await _firestore.collection('items').doc(itemId).delete();
+    } catch (e) {
+      throw Exception('Failed to delete item: $e');
+    }
+  }
+
+  /// Delete an image from Firebase Storage
+  Future<void> deleteImage(String imageUrl) async {
+    try {
+      final ref = _storage.refFromURL(imageUrl);
+      await ref.delete();
     } catch (e) {
       throw Exception('Failed to delete image: $e');
     }
   }
 
-  Future<Uint8List?> getImage(String imagePathOrKey) async {
+  /// Get a single image by its path
+  Future<Uint8List?> getImage(String imagePath) async {
     try {
-      if (kIsWeb) {
-        // For web, get from SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        final base64Image = prefs.getString(imagePathOrKey);
-        if (base64Image != null) {
-          // Remove the data URL prefix if present
-          final data = base64Image.startsWith(_imagePrefix)
-              ? base64Image.substring(_imagePrefix.length)
-              : base64Image;
-          return base64Decode(data);
-        }
-        return null;
-      } else {
-        // For native platforms, read from file
-        final file = File(imagePathOrKey);
-        if (await file.exists()) {
-          return await file.readAsBytes();
-        }
-        return null;
-      }
+      final ref = _storage.refFromURL(imagePath);
+      return await ref.getData();
     } catch (e) {
-      throw Exception('Failed to read image: $e');
+      throw Exception('Failed to fetch image: $e');
     }
   }
 
-  Future<List<Item>> getItems() async {
-    final prefs = await SharedPreferences.getInstance();
-    final itemsJson = prefs.getString('items');
-    if (itemsJson == null) return [];
-
-    final List<dynamic> decodedItems = jsonDecode(itemsJson);
-    return decodedItems.map((item) => Item.fromJson(item)).toList();
-  }
-
-  Future<void> saveItems(List<Item> items) async {
-    final prefs = await SharedPreferences.getInstance();
-    final itemsJson = items.map((item) => item.toJson()).toList();
-    await prefs.setString('items', jsonEncode(itemsJson));
-  }
-
-  Future<void> updateItem(Item item) async {
-    final prefs = await SharedPreferences.getInstance();
-    final items = await getItems();
-
-    final index = items.indexWhere((i) => i.id == item.id);
-    if (index != -1) {
-      items[index] = item;
-      final itemsJson = items.map((item) => item.toJson()).toList();
-      await prefs.setString('items', jsonEncode(itemsJson));
+  /// Update an item in Firestore
+  Future<void> updateItem(Item updatedItem) async {
+    try {
+      await _firestore.collection('items').doc(updatedItem.id).update(updatedItem.toJson());
+    } catch (e) {
+      throw Exception('Failed to update item: $e');
     }
-  }
-
-  Future<void> deleteItem(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    final items = await getItems();
-    items.removeWhere((item) => item.id == id);
-    final itemsJson = items.map((item) => item.toJson()).toList();
-    await prefs.setString('items', jsonEncode(itemsJson));
-  }
-
-  Future<void> saveImage(String key, String value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(key, value);
   }
 }

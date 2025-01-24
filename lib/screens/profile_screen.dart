@@ -6,6 +6,9 @@ import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 import 'change_password_screen.dart';
 import 'signin_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -17,17 +20,30 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController _nameController =
       TextEditingController(text: 'John Doe');
-  final TextEditingController _emailController =
-      TextEditingController(text: 'john.doe@example.com');
+  // final TextEditingController _emailController =
+  //     TextEditingController(text: 'john.doe@example.com');  // Remove hardcoded email
   final AuthService _authService = AuthService();
   bool _notificationsEnabled = true;
   String _selectedTheme = 'system';
   File? _profileImage;
+  String? _userEmail; // Store the fetched email here
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserEmail();
+  }
+
+  Future<void> _loadUserEmail() async {
+      _userEmail = AuthService().getCurrentUserEmail();
+      setState(() {}); // Trigger a UI update after fetching the email
+  }
+
 
   @override
   void dispose() {
     _nameController.dispose();
-    _emailController.dispose();
+    //_emailController.dispose();
     super.dispose();
   }
 
@@ -149,7 +165,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          _emailController.text,
+          _userEmail ?? 'Loading email...', // Use fetched email here
           style: TextStyle(
             fontSize: 16,
             color: Colors.grey[600],
@@ -203,7 +219,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 16),
             TextFormField(
-              controller: _emailController,
+              //controller: _emailController, //remove email controller
+              initialValue: _userEmail,
               enabled: false,
               decoration: InputDecoration(
                 labelText: 'Email',

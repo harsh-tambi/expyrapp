@@ -1,11 +1,10 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AuthService {
-  static const String _emailKey = 'user_email';
-  static const String _passwordKey = 'user_password';
-  static const String _isLoggedInKey = 'is_logged_in';
-
   static final AuthService _instance = AuthService._internal();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   factory AuthService() {
     return _instance;
@@ -15,16 +14,27 @@ class AuthService {
 
   Future<bool> signUp(String email, String password) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final existingEmail = prefs.getString(_emailKey);
+      // Create user with Firebase Authentication
+      final UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-      if (existingEmail != null) {
-        return false; // User already exists
+      // If the user is created successfully, save their data to Firestore
+      if (userCredential.user != null) {
+        final String uid = userCredential.user!.uid;  // Get the unique UID
+
+        // You can store additional user details in Firestore if needed
+        await _firestore.collection('user').doc(uid).set({
+          'uid': uid,  // Explicitly storing the UID
+          'email': email,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        return true;
+      } else {
+        return false;
       }
-
-      await prefs.setString(_emailKey, email);
-      await prefs.setString(_passwordKey, password);
-      return true;
     } catch (e) {
       print('Error during sign up: $e');
       return false;
@@ -33,15 +43,11 @@ class AuthService {
 
   Future<bool> signIn(String email, String password) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final storedEmail = prefs.getString(_emailKey);
-      final storedPassword = prefs.getString(_passwordKey);
-
-      if (storedEmail == email && storedPassword == password) {
-        await prefs.setBool(_isLoggedInKey, true);
-        return true;
-      }
-      return false;
+      final UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      return userCredential.user != null;
     } catch (e) {
       print('Error during sign in: $e');
       return false;
@@ -50,20 +56,19 @@ class AuthService {
 
   Future<void> signOut() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_isLoggedInKey, false);
+      await _auth.signOut();
     } catch (e) {
       print('Error during sign out: $e');
     }
   }
 
   Future<bool> isLoggedIn() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool(_isLoggedInKey) ?? false;
-    } catch (e) {
-      print('Error checking login status: $e');
-      return false;
-    }
+    final User? user = _auth.currentUser;
+    return user != null;
+  }
+
+  String? getCurrentUserEmail() {
+    final User? user = _auth.currentUser;
+    return user?.email;
   }
 }
