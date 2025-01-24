@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "164281328122",
+    "project_id": "expyr-ai",
+    "storage_bucket": "expyr-ai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:164281328122:android:b677058f3fc82b3a430443",
+        "android_client_info": {
+          "package_name": "com.expyrai.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLAWQpHGiZlbxlFk22HjQRxVsCfsTuPbc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:164281328122:android:2110871884681023430443",
+        "android_client_info": {
+          "package_name": "com.mycompany.testingfb"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLAWQpHGiZlbxlFk22HjQRxVsCfsTuPbc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
